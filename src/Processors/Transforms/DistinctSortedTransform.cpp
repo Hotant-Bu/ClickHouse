@@ -13,7 +13,7 @@ DistinctSortedTransform::DistinctSortedTransform(
     : ISimpleTransform(header_, header_, true)
     , header(std::move(header_))
     , description(std::move(sort_description))
-    , columns_names(columns)
+    , column_names(columns)
     , limit_hint(limit_hint_)
     , set_size_limits(set_size_limits_)
 {
@@ -119,24 +119,27 @@ bool DistinctSortedTransform::buildFilter(
 
 ColumnRawPtrs DistinctSortedTransform::getKeyColumns(const Chunk & chunk) const
 {
-    size_t columns = columns_names.empty() ? chunk.getNumColumns() : columns_names.size();
-
-    ColumnRawPtrs column_ptrs;
-    column_ptrs.reserve(columns);
-
-    for (size_t i = 0; i < columns; ++i)
+    /// pre-calculate column positions to process during chunk transformation
+    if (column_positions.empty())
     {
-        auto pos = i;
-        if (!columns_names.empty())
-            pos = input.getHeader().getPositionByName(columns_names[i]);
-
-        const auto & column = chunk.getColumns()[pos];
-
-        /// Ignore all constant columns.
-        if (!isColumnConst(*column))
-            column_ptrs.emplace_back(column.get());
+        const size_t num_columns = column_names.empty() ? chunk.getNumColumns() : column_names.size();
+        column_positions.reserve(num_columns);
+        const Block& hdr = input.getHeader();
+        for (size_t i = 0; i < num_columns; ++i)
+        {
+            auto pos = column_names.empty() ? i : hdr.getPositionByName(column_names[i]);
+            const auto & col = hdr.getByPosition(pos).column;
+            if (col && !isColumnConst(*col))
+                column_positions.emplace_back(pos);
+        }
     }
-
+    ColumnRawPtrs column_ptrs;
+    column_ptrs.reserve(column_positions.size());
+    for (const auto pos : column_positions)
+    {
+        const auto & column = chunk.getColumns()[pos];
+        column_ptrs.emplace_back(column.get());
+    }
     return column_ptrs;
 }
 
